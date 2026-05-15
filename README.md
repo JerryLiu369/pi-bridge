@@ -82,34 +82,103 @@ session = PiSession(
 
 ## API reference
 
-### `PiSession`
+### Input types
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `provider` | `Provider` | API endpoint and key |
-| `model` | `Model` | Model name and format |
-| `cwd` | `str` | Agent working directory (default: `.`) |
-| `system_prompt` | `str` | Override system prompt |
-| `tools` | `list[str] \| None` | Built-in tool allowlist; `None` = all defaults, `[]` = none |
-| `custom_tools` | `list[CustomTool]` | Python-side tools |
-| `persist` | `bool` | Persist session to disk (default: `False`) |
+These are the types you construct and pass into `PiSession`.
 
-| Method | Description |
-|--------|-------------|
-| `send(msg)` | Send message, block until done, return all events |
-| `send_stream(msg)` | Send message, yield events as they arrive |
-| `messages` | Full conversation history |
-| `state` | Current session state (model, message count, …) |
-| `set_model(provider, model)` | Switch model at runtime |
-| `set_thinking_level(level)` | Set thinking level: `off` / `minimal` / `low` / `medium` / `high` / `xhigh` |
-| `compact(instructions)` | Manually trigger context compaction |
-| `abort()` | Abort current operation |
-| `close()` | Shut down the bridge process |
+#### `Provider`
 
-### `Model.api_format`
+| Field | Type | Description |
+|-------|------|-------------|
+| `base_url` | `str` | API base URL, e.g. `"https://api.anthropic.com/v1"` |
+| `api_key` | `str` | API key (default: `""`) |
 
-| Value | Provider |
-|-------|----------|
+Known hosts are mapped to their Pi provider name automatically. Any other hostname is used as-is.
+
+#### `Model`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `str` | Model ID, e.g. `"claude-sonnet-4-5"`, `"deepseek-chat"` |
+| `api_format` | `str` | API call format (see table below) |
+| `thinking` | `str \| None` | Thinking level: `None` / `"off"` / `"minimal"` / `"low"` / `"medium"` / `"high"` / `"xhigh"` |
+
+| `api_format` | For |
+|--------------|-----|
 | `"anthropic"` | Anthropic Claude |
 | `"completion"` | OpenAI Chat Completions, DeepSeek, Groq, … |
 | `"response"` | OpenAI Responses API |
+
+#### `CustomTool`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `str` | Tool name (letters, digits, underscores only) |
+| `description` | `str` | Shown to the model to decide when to call the tool |
+| `parameters` | `dict` | JSON Schema object describing the tool's arguments |
+| `fn` | `Callable` | Python function to call; receives keyword args matching the schema |
+
+`fn` should return a string. Raised exceptions are caught and sent back to the agent as an error result.
+
+---
+
+### `PiSession`
+
+```python
+PiSession(
+    provider: Provider,
+    model: Model,
+    cwd: str = ".",
+    system_prompt: str = "",
+    tools: list[str] | None = None,
+    custom_tools: list[CustomTool] | None = None,
+    persist: bool = False,
+)
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `provider` | — | API endpoint and credentials |
+| `model` | — | Model to use |
+| `cwd` | `"."` | Working directory for the agent |
+| `system_prompt` | `""` | Override the default system prompt |
+| `tools` | `None` | Built-in tool allowlist; `None` = Pi defaults, `[]` = none, `["bash","read",…]` = explicit list |
+| `custom_tools` | `None` | Python-side tools exposed to the agent |
+| `persist` | `False` | Persist session history to disk under `cwd/.pi/` |
+
+**Methods**
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `send(msg)` | `list[ResponseEvent]` | Send a message, block until the agent finishes, return all events |
+| `send_stream(msg)` | `Iterator[ResponseEvent]` | Same but yield events as they arrive |
+| `set_model(provider, model)` | `None` | Hot-swap the model mid-session |
+| `set_thinking_level(level)` | `None` | Change thinking intensity without switching models |
+| `compact(instructions)` | `None` | Manually trigger context compaction |
+| `abort()` | `None` | Abort the current operation |
+| `close()` | `None` | Shut down the bridge process |
+
+**Properties**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `messages` | `list[dict]` | Full conversation history (user / assistant / tool_result) |
+| `state` | `dict` | Current session state: model, message count, streaming flag, etc. |
+
+---
+
+### Response events
+
+`send()` and `send_stream()` return/yield `ResponseEvent`, which is a union of the following:
+
+| Type | Fields | Description |
+|------|--------|-------------|
+| `TextDeltaEvent` | `delta: str` | Incremental text chunk from the model |
+| `ThinkingDeltaEvent` | `delta: str` | Incremental thinking/reasoning chunk |
+| `ToolCallEvent` | `tool_call_id`, `tool_name`, `arguments` | Agent is invoking a tool |
+| `ToolResultEvent` | `tool_call_id`, `tool_name`, `content`, `is_error` | Tool execution completed |
+| `TurnEndEvent` | — | One LLM inference turn finished (may be multiple per `send()`) |
+| `AgentEndEvent` | `stop_reason: str` | Agent finished the full response; last event in every `send()` |
+| `ErrorEvent` | `message: str` | Something went wrong (API error, timeout, etc.) |
+
+All events have a `type` field matching the class name in snake_case (e.g. `"text_delta"`, `"agent_end"`).
