@@ -1,6 +1,6 @@
 # pi-bridge
 
-Python wrapper for the [Pi Agent SDK](https://github.com/earendil-works/pi). Lets you drive a Pi coding agent from Python via a local Node.js bridge process.
+Python wrapper for the [Pi Agent SDK](https://github.com/earendil-works/pi). Pi is an autonomous coding agent that reads, edits, and runs code in a working directory using tools like `bash`, `read`, and `edit`. pi-bridge lets you drive it from Python via a local Node.js bridge process.
 
 ## Dependencies
 
@@ -142,7 +142,7 @@ PiSession(
 | `model` | — | Model to use |
 | `cwd` | `"."` | Working directory for the agent |
 | `system_prompt` | `""` | Override the default system prompt |
-| `tools` | `None` | Built-in tool allowlist; `None` = Pi defaults, `[]` = none, `["bash","read",…]` = explicit list |
+| `tools` | `None` | Built-in tool allowlist; `None` = Pi defaults, `[]` = none, explicit list = only those tools. Available names: `bash`, `read`, `edit`, `write`, `grep`, `find`, `ls` |
 | `custom_tools` | `None` | Python-side tools exposed to the agent |
 | `persist` | `False` | Persist session history to disk under `cwd/.pi/` |
 
@@ -152,9 +152,9 @@ PiSession(
 |--------|---------|-------------|
 | `send(msg)` | `list[ResponseEvent]` | Send a message, block until the agent finishes, return all events |
 | `send_stream(msg)` | `Iterator[ResponseEvent]` | Same but yield events as they arrive |
-| `set_model(provider, model)` | `None` | Hot-swap the model mid-session |
+| `set_model(provider, model)` | `None` | Hot-swap the model mid-session. Conversation history is preserved; new provider credentials take effect immediately. |
 | `set_thinking_level(level)` | `None` | Change thinking intensity without switching models |
-| `compact(instructions)` | `None` | Manually trigger context compaction |
+| `compact(instructions="")` | `None` | Manually trigger context compaction. `instructions` is an optional string telling the model what to focus on when summarizing. |
 | `abort()` | `None` | Abort the current operation |
 | `close()` | `None` | Shut down the bridge process |
 
@@ -162,8 +162,16 @@ PiSession(
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `messages` | `list[dict]` | Full conversation history (user / assistant / tool_result) |
+| `messages` | `list[dict]` | Full conversation history. Each dict has a `role` field (`"user"`, `"assistant"`, `"tool_result"`) plus role-specific fields (see below). |
 | `state` | `dict` | Current session state: model, message count, streaming flag, etc. |
+
+`messages` entry shapes:
+
+```python
+{"role": "user", "content": "your message text"}
+{"role": "assistant", "content": [{"type": "text", "text": "..."}], "stop_reason": "tool_use"}
+{"role": "tool_result", "tool_call_id": "...", "tool_name": "...", "content": "...", "is_error": False}
+```
 
 ---
 
@@ -182,3 +190,25 @@ PiSession(
 | `ErrorEvent` | `message: str` | Something went wrong (API error, timeout, etc.) |
 
 All events have a `type` field matching the class name in snake_case (e.g. `"text_delta"`, `"agent_end"`).
+
+---
+
+### Error handling
+
+`ErrorEvent` is yielded for recoverable errors (e.g. API errors). The session remains usable afterwards.
+
+`BridgeError` is raised as a Python exception when the bridge process crashes or the protocol breaks down. Once raised, the session is dead — create a new `PiSession`.
+
+```python
+from pi_bridge import BridgeError
+
+try:
+    events = session.send("...")
+    for e in events:
+        if e.type == "error":
+            print("Agent error:", e.message)  # recoverable
+        elif e.type == "text_delta":
+            print(e.delta, end="")
+except BridgeError as e:
+    print("Bridge crashed:", e)  # session is dead
+```
