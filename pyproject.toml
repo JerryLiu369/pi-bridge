@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pi-bridge"
+version = "0.1.0"
+description = "Python wrapper for the Pi Agent SDK"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pi_bridge*"]
+
+[tool.setuptools.package-data]
+pi_bridge = []
